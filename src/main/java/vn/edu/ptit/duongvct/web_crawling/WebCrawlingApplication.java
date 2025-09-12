@@ -46,9 +46,10 @@ public class WebCrawlingApplication {
 						if (!text.isBlank()) {
 							text = Jsoup.parse(text).text();
 							System.out.println(text);
+							System.out.println(numUpvotes.size());
+							System.out.println(numDownvotes.size());
 						}
-						System.out.println(numUpvotes.size());
-						System.out.println(numDownvotes.size());
+
 					}
 //					List<WebElement> cmtContents = x.findElements(By.className("cmt-content"));
 //					if (cmtContents.isEmpty()) {
