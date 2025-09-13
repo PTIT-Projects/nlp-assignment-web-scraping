@@ -7,6 +7,7 @@ import org.openqa.selenium.NoSuchElementException;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.chrome.ChromeDriver;
+import org.openqa.selenium.chrome.ChromeOptions;
 import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 import org.slf4j.Logger;
@@ -24,11 +25,15 @@ public class PageCrawlerService implements AutoCloseable{
     private final String url;
     private final WebDriverWait wait;
     private  List<List<String>> csvData;
-    private static final int DATA_LENGTH = 500;
+    private static final int DATA_LENGTH = 1000;
     private static boolean isComplete = false;
     private static int count = 0;
     public PageCrawlerService(String url) {
-        this.driver = new ChromeDriver();
+        ChromeOptions options = new ChromeOptions();
+        options.addArguments("--headless");  // Run headless in Codespaces (no GUI)
+        options.addArguments("--no-sandbox");
+        options.addArguments("--disable-dev-shm-usage");
+        driver = new ChromeDriver(options);
         driver.manage().timeouts().implicitlyWait(Duration.ofMillis(500));
         this.url = url;
         this.wait = new WebDriverWait(driver, Duration.ofSeconds(10));
