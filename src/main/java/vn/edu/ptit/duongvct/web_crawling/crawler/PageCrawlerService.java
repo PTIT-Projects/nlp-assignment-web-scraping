@@ -3,6 +3,7 @@ package vn.edu.ptit.duongvct.web_crawling.crawler;
 import com.opencsv.CSVWriter;
 import org.jsoup.Jsoup;
 import org.openqa.selenium.By;
+import org.openqa.selenium.NoSuchElementException;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.chrome.ChromeDriver;
@@ -23,6 +24,9 @@ public class PageCrawlerService implements AutoCloseable{
     private final String url;
     private final WebDriverWait wait;
     private  List<List<String>> csvData;
+    private static final int DATA_LENGTH = 10000;
+    private static boolean isComplete = false;
+    private static int count = 0;
     public PageCrawlerService(String url) {
         this.driver = new ChromeDriver();
         driver.manage().timeouts().implicitlyWait(Duration.ofMillis(500));
@@ -91,6 +95,7 @@ public class PageCrawlerService implements AutoCloseable{
     }
     public void startCrawlData() {
         csvData.clear();
+        count = 0;
         List<String> header = new ArrayList<>();
         header.add("data");
         header.add("label");
@@ -101,9 +106,13 @@ public class PageCrawlerService implements AutoCloseable{
             List<String> productLinks = getProductLink(productItems);
             for (String productLink : productLinks) {
                 scrapeAllReviews(productLink);
-//                break;
+                if (isComplete) {
+                    break;
+                }
             }
-//            break;
+            if (isComplete) {
+                break;
+            }
         }
         exportToCSV(csvData, "reviews.csv");
     }
@@ -133,7 +142,13 @@ public class PageCrawlerService implements AutoCloseable{
                         List<String> row = new ArrayList<>();
                         row.add(text);
                         row.add(String.valueOf(label));
+                        count++;
+                        if (count > DATA_LENGTH) {
+                            isComplete = true;
+                            return;
+                        }
                         csvData.add(row);
+                        log.info("Count: {}", count);
                         log.info("Comment: {} | Label: {}", text, label);
 //                        break;
                     }
@@ -151,9 +166,16 @@ public class PageCrawlerService implements AutoCloseable{
     }
     private int getNumberOfReviewPages(WebDriver webDriver) {
         int numPage = 1;
-        WebElement pages = driver.findElement(By.className("pagcomment"));
-        List<WebElement> numPages = pages.findElements(By.tagName("a"));
-        numPage = Integer.parseInt(numPages.get(numPages.size() - 2).getText());
+        try {
+            WebElement pages = driver.findElement(By.className("pagcomment"));
+            List<WebElement> numPages = pages.findElements(By.tagName("a"));
+            if (!numPages.isEmpty()) {
+                numPage = Integer.parseInt(numPages.get(numPages.size() - 2).getText());
+            }
+        } catch (NoSuchElementException e) {
+            log.info("No pagination found, assuming 1 page");
+        }
+        log.info("Number of pages: {}", numPage);
         return numPage;
     }
     private void exportToCSV(List<List<String>> data, String fileName) {
