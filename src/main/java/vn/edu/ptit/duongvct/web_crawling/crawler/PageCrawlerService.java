@@ -24,7 +24,7 @@ public class PageCrawlerService implements AutoCloseable{
     private final String url;
     private final WebDriverWait wait;
     private  List<List<String>> csvData;
-    private static final int DATA_LENGTH = 10000;
+    private static final int DATA_LENGTH = 500;
     private static boolean isComplete = false;
     private static int count = 0;
     public PageCrawlerService(String url) {
