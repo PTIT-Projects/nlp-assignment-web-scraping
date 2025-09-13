@@ -25,7 +25,7 @@ public class PageCrawlerService implements AutoCloseable{
     private final String url;
     private final WebDriverWait wait;
     private  List<List<String>> csvData;
-    private static final int DATA_LENGTH = 1000;
+    private static final int DATA_LENGTH = 10000;
     private static boolean isComplete = false;
     private static int count = 0;
     public PageCrawlerService(String url) {
@@ -119,7 +119,7 @@ public class PageCrawlerService implements AutoCloseable{
                 break;
             }
         }
-        exportToCSV(csvData, "reviews.csv");
+        exportToCSV(csvData, "reviews10000.csv");
     }
     private void scrapeAllReviews(String url) {
         url += "/danh-gia";
