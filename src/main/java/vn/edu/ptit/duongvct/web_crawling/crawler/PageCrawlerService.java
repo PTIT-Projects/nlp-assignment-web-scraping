@@ -18,30 +18,36 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
-public class PageCrawlerService implements AutoCloseable{
+public class PageCrawlerService implements AutoCloseable {
     private final Logger log = LoggerFactory.getLogger(PageCrawlerService.class);
-    private final WebDriver driver;
     private final String url;
-    private final WebDriverWait wait;
-    private  List<List<String>> csvData;
-    private static final int DATA_LENGTH = 10000;
-    private static boolean isComplete = false;
-    private static int count = 0;
+    private final ConcurrentLinkedQueue<List<String>> csvData;  // Thread-safe queue for collected data
+    private static final int DATA_LENGTH = 15000;
+    private static final AtomicBoolean isComplete = new AtomicBoolean(false);  // Atomic for thread safety
+    private static final AtomicInteger count = new AtomicInteger(0);  // Atomic counter
+    private final ExecutorService executor;  // Virtual thread executor
+
     public PageCrawlerService(String url) {
-        ChromeOptions options = new ChromeOptions();
-        options.addArguments("--headless");  // Run headless in Codespaces (no GUI)
-        options.addArguments("--no-sandbox");
-        options.addArguments("--disable-dev-shm-usage");
-        driver = new ChromeDriver(options);
-        driver.manage().timeouts().implicitlyWait(Duration.ofMillis(500));
         this.url = url;
-        this.wait = new WebDriverWait(driver, Duration.ofSeconds(10));
-        csvData = new ArrayList<>();
+        this.csvData = new ConcurrentLinkedQueue<>();
+        this.executor = Executors.newVirtualThreadPerTaskExecutor();  // Virtual thread executor for concurrency
     }
 
-    public List<WebElement> getProductItemsList(String url) {
-        List<WebElement> productItems = new ArrayList<>();
+    public List<String> getProductItemsList(String url) {
+        // Create a new WebDriver instance for this thread
+        ChromeOptions options = new ChromeOptions();
+        options.addArguments("--headless");
+        options.addArguments("--no-sandbox");
+        options.addArguments("--disable-dev-shm-usage");
+        WebDriver driver = new ChromeDriver(options);
+        driver.manage().timeouts().implicitlyWait(Duration.ofMillis(500));
+        WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(10));
+
+        List<String> productLinks = new ArrayList<>();
         driver.get(url);
         int previousCount = 0;
         // Loop: while the "see more" button is present, click it and wait for item count to increase
@@ -56,19 +62,42 @@ public class PageCrawlerService implements AutoCloseable{
                     List<WebElement> items = d.findElements(By.xpath("//*[@id=\"categoryPage\"]/div[1]/ul/*"));
                     return items.size() > finalPreviousCount;
                 });
-                productItems = driver.findElements(By.xpath("//*[@id=\"categoryPage\"]/div[1]/ul/*"));
+                List<WebElement> productItems = driver.findElements(By.xpath("//*[@id=\"categoryPage\"]/div[1]/ul/*"));
                 previousCount = productItems.size();
-                log.info("Product items after click: {}",previousCount);
+                log.info("Product items after click: {}", previousCount);
             } catch (Exception e) {
                 // end of list, button now shown
                 log.info("No more 'Xem thêm' button found or no new items loaded. Stopping.");
                 break;
             }
         }
-        log.info(String.valueOf(productItems.size()));
-        return productItems;
+        // Extract links from the final productItems before quitting
+        List<WebElement> finalProductItems = driver.findElements(By.xpath("//*[@id=\"categoryPage\"]/div[1]/ul/*"));
+        for (WebElement item : finalProductItems) {
+            try {
+                WebElement aTag = item.findElement(By.tagName("a"));
+                String link = aTag.getAttribute("href");
+                if (link != null) {
+                    productLinks.add(link);
+                }
+            } catch (Exception e) {
+                log.warn("Failed to extract link from item: {}", e.getMessage());
+            }
+        }
+        log.info("Total product links extracted: {}", productLinks.size());
+        driver.quit();  // Close driver after use
+        return productLinks;
     }
+
     private List<String> getAllProductPageLink() {
+        // Create a new WebDriver instance for this thread
+        ChromeOptions options = new ChromeOptions();
+        options.addArguments("--headless");
+        options.addArguments("--no-sandbox");
+        options.addArguments("--disable-dev-shm-usage");
+        WebDriver driver = new ChromeDriver(options);
+        driver.manage().timeouts().implicitlyWait(Duration.ofMillis(500));
+
         driver.get(url);
         List<String> result = new ArrayList<>();
         List<WebElement> elements = driver.findElements(By.xpath("/html/body/header/div[1]/div[2]/div/ul/*"));
@@ -78,7 +107,7 @@ public class PageCrawlerService implements AutoCloseable{
             List<WebElement> menuItems = element.findElements(By.className("menuitem"));
             for (WebElement menu : menuItems) {
                 List<WebElement> aTags = menu.findElements(By.tagName("a"));
-                for(WebElement item : aTags) {
+                for (WebElement item : aTags) {
                     String href = item.getAttribute("href");
                     if (href != null && (href.startsWith("http://") || href.startsWith("https://"))) {
                         result.add(href);
@@ -86,81 +115,103 @@ public class PageCrawlerService implements AutoCloseable{
                 }
             }
         }
+        driver.quit();  // Close driver after use
         return result;
     }
-    private List<String> getProductLink(List<WebElement> productItems) {
-        List<String> result = new ArrayList<>();
-        productItems.forEach(item -> {
-            WebElement aTag = item.findElement(By.tagName("a"));
-            String link = aTag.getAttribute("href");
-//            log.info("Link product: {}", link);
-            result.add(link);
-        });
-        return result;
-    }
+
     public void startCrawlData() {
         csvData.clear();
-        count = 0;
+        count.set(0);
+        isComplete.set(false);
+
+        // Add header
         List<String> header = new ArrayList<>();
         header.add("data");
         header.add("label");
         csvData.add(header);
+
         List<String> productPageLinks = getAllProductPageLink();
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
+
+        // Limit concurrency to 10 threads to avoid overwhelming the site
+        Semaphore semaphore = new Semaphore(10);
+
         for (String link : productPageLinks) {
-            List<WebElement> productItems =  this.getProductItemsList(link);
-            List<String> productLinks = getProductLink(productItems);
-            for (String productLink : productLinks) {
-                scrapeAllReviews(productLink);
-                if (isComplete) {
-                    break;
+            if (isComplete.get()) break;
+            CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+                try {
+                    semaphore.acquire();  // Acquire permit
+                    List<String> productLinks = getProductItemsList(link);  // Now returns List<String>
+                    for (String productLink : productLinks) {
+                        if (isComplete.get()) break;
+                        scrapeAllReviews(productLink);  // Scrape reviews for this product
+                    }
+                } catch (Exception e) {
+                    log.error("Error processing link {}: {}", link, e.getMessage());
+                } finally {
+                    semaphore.release();  // Release permit
                 }
-            }
-            if (isComplete) {
-                break;
-            }
+            }, executor);
+            futures.add(future);
         }
-        exportToCSV(csvData, "reviews10000.csv");
+
+        // Wait for all tasks to complete
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+        // Export collected data
+        exportToCSV(new ArrayList<>(csvData), String.format("reviews%d.csv", DATA_LENGTH));
     }
+
     private void scrapeAllReviews(String url) {
-        url += "/danh-gia";
-        driver.get(url);
-        //get number of pages
-        int numPage = getNumberOfReviewPages(driver);
-        for (int i = 1; i <= numPage; i++) {
-            log.info("Page: {}", i);
-            String newUrl = String.format("%s?page=%d", url, i);
-            driver.get(newUrl);
-            List<WebElement> comments = driver.findElements(By.className("comment-list"));
-            if (comments.isEmpty()) {
-                continue;
-            }
-            for (WebElement commentItem : comments) {
-                List<WebElement> commentDetails = commentItem.findElements(By.xpath("*"));
-                for (WebElement comment : commentDetails) {
-                    WebElement content = comment.findElement(By.className("cmt-txt"));
-                    String text = content.getText().trim();
-                    if (!text.isBlank()) {
-                        text = Jsoup.parse(text).text();
-//                        log.info(text);
-                        boolean isContent = isContentReview(comment);
-                        int label = isContent ? 1 : 0;
-                        List<String> row = new ArrayList<>();
-                        row.add(text);
-                        row.add(String.valueOf(label));
-                        count++;
-                        if (count > DATA_LENGTH) {
-                            isComplete = true;
-                            return;
+        // Create a new WebDriver instance for this thread
+        ChromeOptions options = new ChromeOptions();
+        options.addArguments("--headless");
+        options.addArguments("--no-sandbox");
+        options.addArguments("--disable-dev-shm-usage");
+        WebDriver driver = new ChromeDriver(options);
+        driver.manage().timeouts().implicitlyWait(Duration.ofMillis(500));
+        WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(10));
+
+        try {
+            url += "/danh-gia";
+            driver.get(url);
+            int numPage = getNumberOfReviewPages(driver);
+            for (int i = 1; i <= numPage; i++) {
+                if (isComplete.get()) break;
+                log.info("Page: {}", i);
+                String newUrl = String.format("%s?page=%d", url, i);
+                driver.get(newUrl);
+                List<WebElement> comments = driver.findElements(By.className("comment-list"));
+                if (comments.isEmpty()) continue;
+                for (WebElement commentItem : comments) {
+                    List<WebElement> commentDetails = commentItem.findElements(By.xpath("*"));
+                    for (WebElement comment : commentDetails) {
+                        WebElement content = comment.findElement(By.className("cmt-txt"));
+                        String text = content.getText().trim();
+                        if (!text.isBlank()) {
+                            text = Jsoup.parse(text).text();
+                            boolean isContent = isContentReview(comment);
+                            int label = isContent ? 1 : 0;
+                            List<String> row = new ArrayList<>();
+                            row.add(text);
+                            row.add(String.valueOf(label));
+                            int currentCount = count.incrementAndGet();
+                            if (currentCount > DATA_LENGTH) {
+                                isComplete.set(true);
+                                return;
+                            }
+                            csvData.add(row);
+                            log.info("Count: {}", currentCount);
+                            log.info("Comment: {} | Label: {}", text, label);
                         }
-                        csvData.add(row);
-                        log.info("Count: {}", count);
-                        log.info("Comment: {} | Label: {}", text, label);
-//                        break;
                     }
                 }
             }
+        } finally {
+            driver.quit();  // Always close the driver
         }
     }
+
     private boolean isContentReview(WebElement review) {
         List<WebElement> numUpvotes = review.findElements(By.className("iconcmt-starbuy"));
         log.info("Number of stars: {}", numUpvotes.size());
@@ -169,10 +220,11 @@ public class PageCrawlerService implements AutoCloseable{
         }
         return false;
     }
+
     private int getNumberOfReviewPages(WebDriver webDriver) {
         int numPage = 1;
         try {
-            WebElement pages = driver.findElement(By.className("pagcomment"));
+            WebElement pages = webDriver.findElement(By.className("pagcomment"));
             List<WebElement> numPages = pages.findElements(By.tagName("a"));
             if (!numPages.isEmpty()) {
                 numPage = Integer.parseInt(numPages.get(numPages.size() - 2).getText());
@@ -183,6 +235,7 @@ public class PageCrawlerService implements AutoCloseable{
         log.info("Number of pages: {}", numPage);
         return numPage;
     }
+
     private void exportToCSV(List<List<String>> data, String fileName) {
         try (OutputStreamWriter fileWriter = new OutputStreamWriter(new FileOutputStream(fileName), StandardCharsets.UTF_8);
              CSVWriter writer = new CSVWriter(fileWriter)) {
@@ -197,6 +250,9 @@ public class PageCrawlerService implements AutoCloseable{
 
     @Override
     public void close() throws Exception {
-        driver.quit();
+        executor.shutdown();
+        if (!executor.awaitTermination(10, TimeUnit.SECONDS)) {
+            executor.shutdownNow();
+        }
     }
 }
