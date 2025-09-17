@@ -25,12 +25,18 @@ public class PageCrawlerService implements AutoCloseable{
     private final String url;
     private final WebDriverWait wait;
     private  List<List<String>> csvData;
-    private static final int DATA_LENGTH = 10000;
+    private static final int DATA_LENGTH = 3000;
+    private static int COUNT0 = 0;
+    private static boolean continueCount0 = true;
+    private static boolean continueCount1 = true;
+    private static boolean continueCount2 = true;
+    private static int COUNT1 = 0;
+    private static int COUNT2 = 0;
+    private static final int THRESHOLD = DATA_LENGTH / 3;
     private static boolean isComplete = false;
-    private static int count = 0;
     public PageCrawlerService(String url) {
         ChromeOptions options = new ChromeOptions();
-        options.addArguments("--headless");  // Run headless in Codespaces (no GUI)
+        options.addArguments("--headless");
         options.addArguments("--no-sandbox");
         options.addArguments("--disable-dev-shm-usage");
         driver = new ChromeDriver(options);
@@ -100,11 +106,12 @@ public class PageCrawlerService implements AutoCloseable{
     }
     public void startCrawlData() {
         csvData.clear();
-        count = 0;
         List<String> header = new ArrayList<>();
         header.add("data");
+        header.add("numStars");
         header.add("label");
         csvData.add(header);
+        COUNT0 = COUNT1 = COUNT2 =0;
         List<String> productPageLinks = getAllProductPageLink();
         for (String link : productPageLinks) {
             List<WebElement> productItems =  this.getProductItemsList(link);
@@ -119,7 +126,7 @@ public class PageCrawlerService implements AutoCloseable{
                 break;
             }
         }
-        exportToCSV(csvData, "reviews10000.csv");
+        exportToCSV(csvData, String.format("reviews%d.csv", DATA_LENGTH));
     }
     private void scrapeAllReviews(String url) {
         url += "/danh-gia";
@@ -142,18 +149,53 @@ public class PageCrawlerService implements AutoCloseable{
                     if (!text.isBlank()) {
                         text = Jsoup.parse(text).text();
 //                        log.info(text);
-                        boolean isContent = isContentReview(comment);
-                        int label = isContent ? 1 : 0;
                         List<String> row = new ArrayList<>();
-                        row.add(text);
-                        row.add(String.valueOf(label));
-                        count++;
-                        if (count > DATA_LENGTH) {
+                        int countStars = countNumberOfStars(comment);
+                        int label = 0;
+                        if (countStars >= 4) {
+                            label = 2;
+                        } else if (countStars == 3) {
+                            label = 1;
+                        }
+                        if (COUNT0 > THRESHOLD) {
+                            continueCount0 = false;
+                        }
+                        if (COUNT1 > THRESHOLD) {
+                            continueCount1 = false;
+                        }
+                        if (COUNT2 > THRESHOLD) {
+                            continueCount2 = false;
+                        }
+                        if (label == 0) {
+                            if (continueCount0) {
+                                row.add(text);
+                                row.add(String.valueOf(countStars));
+                                row.add(String.valueOf(label));
+                                COUNT0++;
+                            }
+                        } else if (label == 1) {
+                            if (continueCount1) {
+                                row.add(text);
+                                row.add(String.valueOf(countStars));
+                                row.add(String.valueOf(label));
+                                COUNT1++;
+                            }
+                        } else {
+                            if (continueCount2) {
+                                row.add(text);
+                                row.add(String.valueOf(countStars));
+                                row.add(String.valueOf(label));
+                                COUNT2++;
+                            }
+                        }
+                        if (!row.isEmpty()) {
+                            csvData.add(row);
+                        }
+                        if (!continueCount0 && !continueCount1 && !continueCount2) {
                             isComplete = true;
                             return;
                         }
-                        csvData.add(row);
-                        log.info("Count: {}", count);
+                        log.info("Number of reviews: {}", COUNT0 + COUNT1 + COUNT2);
                         log.info("Comment: {} | Label: {}", text, label);
 //                        break;
                     }
@@ -161,13 +203,11 @@ public class PageCrawlerService implements AutoCloseable{
             }
         }
     }
-    private boolean isContentReview(WebElement review) {
+    private int countNumberOfStars(WebElement review) {
         List<WebElement> numUpvotes = review.findElements(By.className("iconcmt-starbuy"));
-        log.info("Number of stars: {}", numUpvotes.size());
-        if (numUpvotes.size() >= 3) {
-            return true;
-        }
-        return false;
+        int res = numUpvotes.size();
+        log.info("Number of stars: {}", res);
+        return res;
     }
     private int getNumberOfReviewPages(WebDriver webDriver) {
         int numPage = 1;
