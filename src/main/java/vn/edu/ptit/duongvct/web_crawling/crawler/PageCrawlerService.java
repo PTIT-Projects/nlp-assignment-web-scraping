@@ -25,14 +25,16 @@ public class PageCrawlerService implements AutoCloseable{
     private final String url;
     private final WebDriverWait wait;
     private  List<List<String>> csvData;
-    private static final int DATA_LENGTH = 3000;
+    private static final int DATA_LENGTH = 6000;
     private static int COUNT0 = 0;
     private static boolean continueCount0 = true;
     private static boolean continueCount1 = true;
     private static boolean continueCount2 = true;
     private static int COUNT1 = 0;
     private static int COUNT2 = 0;
-    private static final int THRESHOLD = DATA_LENGTH / 3;
+    private static final int THRESHOLD1 = DATA_LENGTH / 6;
+    private static final int THRESHOLD2 = DATA_LENGTH * 2 / 6;
+    private static final int THRESHOLD0 = DATA_LENGTH / 2;
     private static boolean isComplete = false;
     public PageCrawlerService(String url) {
         ChromeOptions options = new ChromeOptions();
@@ -112,21 +114,26 @@ public class PageCrawlerService implements AutoCloseable{
         header.add("label");
         csvData.add(header);
         COUNT0 = COUNT1 = COUNT2 =0;
-        List<String> productPageLinks = getAllProductPageLink();
-        for (String link : productPageLinks) {
-            List<WebElement> productItems =  this.getProductItemsList(link);
-            List<String> productLinks = getProductLink(productItems);
-            for (String productLink : productLinks) {
-                scrapeAllReviews(productLink);
+        try {
+            List<String> productPageLinks = getAllProductPageLink();
+            for (String link : productPageLinks) {
+                List<WebElement> productItems = this.getProductItemsList(link);
+                List<String> productLinks = getProductLink(productItems);
+                for (String productLink : productLinks) {
+                    scrapeAllReviews(productLink);
+                    if (isComplete) {
+                        break;
+                    }
+                }
                 if (isComplete) {
                     break;
                 }
             }
-            if (isComplete) {
-                break;
-            }
+            exportToCSV(csvData, String.format("reviews%d.csv", DATA_LENGTH));
+        } catch (Exception e) {
+            log.error("Exception during crawling: {}", e.getMessage(), e);
+            saveOnException(e);
         }
-        exportToCSV(csvData, String.format("reviews%d.csv", DATA_LENGTH));
     }
     private void scrapeAllReviews(String url) {
         url += "/danh-gia";
@@ -157,13 +164,13 @@ public class PageCrawlerService implements AutoCloseable{
                         } else if (countStars == 3) {
                             label = 1;
                         }
-                        if (COUNT0 > THRESHOLD) {
+                        if (COUNT0 > THRESHOLD0) {
                             continueCount0 = false;
                         }
-                        if (COUNT1 > THRESHOLD) {
+                        if (COUNT1 > THRESHOLD1) {
                             continueCount1 = false;
                         }
-                        if (COUNT2 > THRESHOLD) {
+                        if (COUNT2 > THRESHOLD2) {
                             continueCount2 = false;
                         }
                         if (label == 0) {
@@ -234,7 +241,16 @@ public class PageCrawlerService implements AutoCloseable{
             log.error("Error writing CSV file: {}", e.getMessage());
         }
     }
+    private void saveOnException(Exception e) {
+        int current = getCurrentCount();
+        String fileName = String.format("reviews%d_exception.csv", current);
+        exportToCSV(csvData, fileName);
+        log.info("Partial CSV saved to {} (current count = {}) after exception: {}", fileName, current, e.getMessage());
+    }
 
+    private int getCurrentCount() {
+        return COUNT0 + COUNT1 + COUNT2;
+    }
     @Override
     public void close() throws Exception {
         driver.quit();
