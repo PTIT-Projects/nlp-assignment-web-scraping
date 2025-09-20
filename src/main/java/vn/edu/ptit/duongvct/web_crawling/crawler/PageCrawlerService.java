@@ -25,15 +25,15 @@ public class PageCrawlerService implements AutoCloseable{
     private final String url;
     private final WebDriverWait wait;
     private  List<List<String>> csvData;
-    private static final int DATA_LENGTH = 6000;
+    private static final int DATA_LENGTH = 10000;
     private static int COUNT0 = 0;
     private static boolean continueCount0 = true;
     private static boolean continueCount1 = true;
     private static boolean continueCount2 = true;
     private static int COUNT1 = 0;
     private static int COUNT2 = 0;
-    private static final int THRESHOLD1 = DATA_LENGTH / 6;
-    private static final int THRESHOLD2 = DATA_LENGTH * 2 / 6;
+    private static final int THRESHOLD1 = DATA_LENGTH / 8;
+    private static final int THRESHOLD2 = DATA_LENGTH * 3 / 8;
     private static final int THRESHOLD0 = DATA_LENGTH / 2;
     private static boolean isComplete = false;
     public PageCrawlerService(String url) {
