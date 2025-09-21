@@ -43,10 +43,10 @@ public class PageCrawlerService implements AutoCloseable{
         options.addArguments("--disable-dev-shm-usage");
         driver = new ChromeDriver(options);
         // increased implicit wait to reduce timing issues
-        driver.manage().timeouts().implicitlyWait(Duration.ofSeconds(2));
+        driver.manage().timeouts().implicitlyWait(Duration.ofSeconds(30));
         this.url = url;
         // increased explicit wait timeout
-        this.wait = new WebDriverWait(driver, Duration.ofSeconds(30));
+        this.wait = new WebDriverWait(driver, Duration.ofSeconds(60));
         csvData = new ArrayList<>();
     }
 
